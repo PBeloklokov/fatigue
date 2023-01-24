@@ -52,7 +52,7 @@ private:
 int main(int argc, char *argv[])
 {
     const char *mesh_file = "./data/prepared.msh";
-    int order = 2;
+    int order = 1;
 
     OptionsParser args(argc, argv);
     args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -65,14 +65,11 @@ int main(int argc, char *argv[])
     }
     args.PrintOptions(cout);
 
-    cout << "00000" << endl;
-
     Mesh *mesh = new Mesh(mesh_file, 1, 1);
     int dim = mesh->Dimension();
 
     // Break material...
     // 1 - ok, 2 - broken
-    cout << "11111" << endl;
     for (int en = 0; en < mesh->GetNE(); en++)
     {
         Element *element = mesh->GetElement(en);
