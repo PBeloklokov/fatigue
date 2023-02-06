@@ -153,12 +153,15 @@ void deformation(Mesh *mesh, Array<bool> &el_in_circle, Vector &sigma_xx_full, V
 
     Vector sigma_eq(mesh->GetNE()), sigma_1(mesh->GetNE()), B_n(mesh->GetNE());
     double delta_N_n = 1e10;
-    // fstream def_out("fatigue/deformation.vtk", ios::out);
+    // fstream def_out("deformation_cpp.vtk", ios::out);
+    // fstream sig_out("sigma_cpp.vtk", ios::out);
     for (int en = 0; en < mesh->GetNE(); en++)
     {
         double delta_sigma_1 = sqrt(pow((sigma_xx(en) - sigma_yy(en)), 2) + 4 * pow(sigma_xy(en), 2));
         sigma_1(en) = (sigma_xx(en) + sigma_yy(en)) / 2 + delta_sigma_1 / 2;
         sigma_eq(en) = sqrt(sigma_1(en) * delta_sigma_1 / 2);
+        // sig_out << "en = " << en << " xx = " << sigma_xx(en) << " yy = " << sigma_yy(en) << " xy = " << sigma_xy(en) << " _1 = " << sigma_1(en) << " eq = " << sigma_eq(en) << endl;
+        
         if (sigma_1(en) > 0 && sigma_eq(en) > sigma_u && !el_in_circle[en])
         {
             B_n(en) = 1e-3 * pow((sigma_eq(en) - sigma_u) / (sigma_v - sigma_u), 1 / beta_L) / (2 * (1 - gamma));
@@ -173,6 +176,8 @@ void deformation(Mesh *mesh, Array<bool> &el_in_circle, Vector &sigma_xx_full, V
         }
     }
     // cout << "dN_n = " << delta_N_n << endl;
+    fstream dN_out("delta_N.txt", ios::app);
+    dN_out << delta_N_n << endl;
     for (int en = 0; en < mesh->GetNE(); en++)
     {
         Element *element = mesh->GetElement(en);
@@ -215,12 +220,12 @@ int main(int argc, char *argv[])
 
     // if true, you should solve last mesh again to get last GridFunction x - displacement
     // it's easier than load displacement data from output_{start_num}.vtk
-    bool attr_from_file = false; 
-    const char *mesh_file_attr = "./fatigue/output_000199.vtk";
+    bool attr_from_file = false;
+    const char *mesh_file_attr = "./fatigue/output_000549.vtk";
 
-    int start_num = 199; // First out_file will be output_{start_num}.vtk
+    int start_num = 549; // First out_file will be output_{start_num}.vtk
     if (!attr_from_file) start_num = 0;
-    int run_count = 100; // Total, with first run (100 + 1 in case attr_from_file == true)
+    int run_count = 50; // Total, with first run (100 + 1 in case attr_from_file == true)
 
     OptionsParser args(argc, argv);
     args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -352,10 +357,10 @@ int main(int argc, char *argv[])
         get_sigma(mesh, pp_field, sigma_xx, ref);
         pp_coeff.setComponent(1);
         pp_field.ProjectCoefficient(pp_coeff);
-        get_sigma(mesh, pp_field, sigma_yy, ref);
+        get_sigma(mesh, pp_field, sigma_xy, ref);
         pp_coeff.setComponent(2);
         pp_field.ProjectCoefficient(pp_coeff);
-        get_sigma(mesh, pp_field, sigma_xy, ref);
+        get_sigma(mesh, pp_field, sigma_yy, ref);
 
         deformation(mesh, el_in_circle, sigma_xx, sigma_yy, sigma_xy, psi);
         cout << "MESH IS DEFORMATED" << endl;
