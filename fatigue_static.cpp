@@ -230,15 +230,20 @@ int main(int argc, char *argv[])
     int order = 2;
     int ref = 0;
 
+    // Folder where you want to store the result.
+    // If you want to take last data and continue solving,
+    // don't forget to change folder in mesh_file_attr
     const char *folder_name = "vel_test_2";
+    // If you want continue solving, make true and you'll get attributes from last file.
     // if true, you should solve last mesh again to get last GridFunction x - displacement
-    // it's easier than load displacement data from output_{start_num}.vtk
+    // (it's easier than load displacement data from output_{start_num}.vtk)
     bool attr_from_file = false;
+    // Write number of last file in path and in start_num 
     const char *mesh_file_attr = "./vel_test_2/output_000500.vtk";
-    // sprintf(mesh_file_attr, "./%s/output_000500.vtk", folder_name);
-
     int start_num = 0; // First out_file will be output_{start_num}.vtk
+    // sprintf(mesh_file_attr, "./%s/output_000500.vtk", folder_name);
     if (!attr_from_file) start_num = 0;
+    
     int run_count = 500 + 1; // Total, with first run (100 + 1 in case attr_from_file == true)
     int it_out = 20;   // Every it_out iteration file will be written
 
