@@ -52,14 +52,24 @@ void solver(Mesh *mesh, FiniteElementSpace *fespace, PWConstCoefficient &lambda_
 
     x = 0.0;
 
+    // Displacement on top boundary
     Array<int> ess_bdr(mesh->bdr_attributes.Max());
     ess_bdr = 0;
     ess_bdr[2] = 1;
     Vector displacement_vec(dim);
     displacement_vec[0] = 0.0;
     displacement_vec[1] = 0.00004;
-    VectorConstantCoefficient displacement_vec_coeff(displacement_vec);
-    x.ProjectBdrCoefficient(displacement_vec_coeff, ess_bdr);
+    VectorConstantCoefficient displacement_vec_coeff_top(displacement_vec);
+    x.ProjectBdrCoefficient(displacement_vec_coeff_top, ess_bdr);
+
+    // Displacement on bottom boundary
+    // ess_bdr = 0;
+    // ess_bdr[0] = 1;
+    // // Vector displacement_vec(dim);
+    // displacement_vec[0] = 0.0;
+    // displacement_vec[1] = - 0.00004;
+    // VectorConstantCoefficient displacement_vec_coeff_bottom(displacement_vec);
+    // x.ProjectBdrCoefficient(displacement_vec_coeff_bottom, ess_bdr);
 
     // Set zero force on other boundaries??? Eliminate this?
     VectorArrayCoefficient f(dim);
@@ -136,7 +146,7 @@ void get_sigma(Mesh *mesh, GridFunction &pp_field, Vector &sigma, int ref = 0)
     }
 }
 
-void deformation(Mesh *mesh, Array<bool> &el_in_circle, Vector &sigma_xx_full, Vector &sigma_yy_full, Vector &sigma_xy_full, Vector &psi)
+void deformation(Mesh *mesh, Array<bool> &el_in_circle, Vector &sigma_xx_full, Vector &sigma_yy_full, Vector &sigma_xy_full, Vector &psi, const char *folder_name)
 {
     const double sigma_u = 340e6;
     const double sigma_v = 1160e6;
@@ -176,8 +186,10 @@ void deformation(Mesh *mesh, Array<bool> &el_in_circle, Vector &sigma_xx_full, V
         }
     }
     // cout << "dN_n = " << delta_N_n << endl;
-    fstream dN_out("delta_N.txt", ios::app);
-    dN_out << delta_N_n << endl;
+    // char out_file_name[100];
+    // sprintf(out_file_name, "delta_N/%s.txt", folder_name);
+    // ofstream dN_out(out_file_name, ios::app);     // (o)fstream?
+    // dN_out << delta_N_n << endl;
     for (int en = 0; en < mesh->GetNE(); en++)
     {
         Element *element = mesh->GetElement(en);
@@ -218,14 +230,17 @@ int main(int argc, char *argv[])
     int order = 2;
     int ref = 0;
 
+    const char *folder_name = "vel_test_2";
     // if true, you should solve last mesh again to get last GridFunction x - displacement
     // it's easier than load displacement data from output_{start_num}.vtk
     bool attr_from_file = false;
-    const char *mesh_file_attr = "./fatigue/output_000549.vtk";
+    const char *mesh_file_attr = "./vel_test_2/output_000500.vtk";
+    // sprintf(mesh_file_attr, "./%s/output_000500.vtk", folder_name);
 
-    int start_num = 549; // First out_file will be output_{start_num}.vtk
+    int start_num = 0; // First out_file will be output_{start_num}.vtk
     if (!attr_from_file) start_num = 0;
-    int run_count = 50; // Total, with first run (100 + 1 in case attr_from_file == true)
+    int run_count = 500 + 1; // Total, with first run (100 + 1 in case attr_from_file == true)
+    int it_out = 20;   // Every it_out iteration file will be written
 
     OptionsParser args(argc, argv);
     args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -242,6 +257,7 @@ int main(int argc, char *argv[])
     int dim = mesh->Dimension();
 
     const int attributes_size = 1001;
+
     Vector psi(attributes_size), E(attributes_size), lambda(attributes_size), mu(attributes_size);
 
     const double E0 = 116e9;
@@ -257,6 +273,8 @@ int main(int argc, char *argv[])
     }
 
     int ref_levels = (int)floor(log(5000./mesh->GetNE())/log(2.)/dim);
+    // int ref_levels = (int)floor(log(20000./mesh->GetNE())/log(2.)/dim);
+    // cout << "ref_levels = " << ref_levels << endl;
     for (int l = 0; l < ref_levels; l++)
         mesh->UniformRefinement();
 
@@ -274,27 +292,27 @@ int main(int argc, char *argv[])
 
     Array<bool> el_in_circle(mesh->GetNE());
     el_in_circle = false;
-    for (int en = 0; en < mesh->GetNE(); en++)
-    {
-        Element *element = mesh->GetElement(en);
-        Array<int> indices;
-        element->GetVertices(indices);
-        double x_c = 0;
-        double y_c = 0;
-        for (int pn = 0; pn < element->GetNVertices(); pn++)
-        {
-            x_c += *(mesh->GetVertex(indices[pn]) + 0) / element->GetNVertices();
-            y_c += *(mesh->GetVertex(indices[pn]) + 1) / element->GetNVertices();
-        }
-        const double R = 0.001;
-        const double R_x = 0.006;
-        const double R_y = 0.006;
-        if (pow(x_c - R_x, 2) + pow(y_c - R_y, 2) < R * R)
-        {
-            if (!attr_from_file) element->SetAttribute(attributes_size);
-            el_in_circle[en] = true;
-        } 
-    }
+    // for (int en = 0; en < mesh->GetNE(); en++)
+    // {
+    //     Element *element = mesh->GetElement(en);
+    //     Array<int> indices;
+    //     element->GetVertices(indices);
+    //     double x_c = 0;
+    //     double y_c = 0;
+    //     for (int pn = 0; pn < element->GetNVertices(); pn++)
+    //     {
+    //         x_c += *(mesh->GetVertex(indices[pn]) + 0) / element->GetNVertices();
+    //         y_c += *(mesh->GetVertex(indices[pn]) + 1) / element->GetNVertices();
+    //     }
+    //     const double R = 0.001;
+    //     const double R_x = 0.006;
+    //     const double R_y = 0.006;
+    //     if (pow(x_c - R_x, 2) + pow(y_c - R_y, 2) < R * R)
+    //     {
+    //         if (!attr_from_file) element->SetAttribute(attributes_size);
+    //         el_in_circle[en] = true;
+    //     } 
+    // }
     if (attr_from_file) mesh_attribute_from_file(mesh, mesh_file_attr);
 
 
@@ -316,7 +334,7 @@ int main(int argc, char *argv[])
     ess_bdr[1] = 1;
     ess_bdr[3] = 1;
     fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_list, 0); // last argument is the displacement component
-    // Set zero vertical displacement on bottom boundary.
+    // Set predefined vertical displacement on bottom boundary.
     ess_bdr = 0;
     ess_bdr[0] = 1;
     Array<int> ess_tdof_tmp_bottom;
@@ -328,6 +346,14 @@ int main(int argc, char *argv[])
     Array<int> ess_tdof_tmp_top;
     fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_tmp_top, dim - 1);
     ess_tdof_list.Append(ess_tdof_tmp_top);
+    // Set zero displacement on inner boundary.
+    // ess_bdr = 0;
+    // ess_bdr[4] = 1;
+    // Array<int> ess_tdof_tmp_inner;
+    // fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_tmp_inner, 0);
+    // ess_tdof_list.Append(ess_tdof_tmp_inner);
+    // fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_tmp_inner, dim - 1);
+    // ess_tdof_list.Append(ess_tdof_tmp_inner);
 
 
     // First run
@@ -339,7 +365,7 @@ int main(int argc, char *argv[])
     SigmaCoefficient pp_coeff(x, lambda_func, mu_func);
 
     char out_file_name[100];
-    sprintf(out_file_name, "fatigue/output_%06d.vtk", start_num);
+    sprintf(out_file_name, "%s/output_%06d.vtk", folder_name, start_num);
     fstream vtkFs(out_file_name, ios::out);
     print(vtkFs, mesh, x, pp_field, pp_coeff, ref);
 
@@ -348,7 +374,7 @@ int main(int argc, char *argv[])
     // (run_count - 1) iterations. deformate - > solve -> print
     for (int it = start_num + 1; it < start_num + run_count; it++)
     {
-        cout << "it = " << it << endl;
+        cout << endl << "IT = " << it << endl << endl;
 
         // Deformation based on previous solution
         Vector sigma_xx(np), sigma_yy(np), sigma_xy(np);
@@ -362,19 +388,22 @@ int main(int argc, char *argv[])
         pp_field.ProjectCoefficient(pp_coeff);
         get_sigma(mesh, pp_field, sigma_yy, ref);
 
-        deformation(mesh, el_in_circle, sigma_xx, sigma_yy, sigma_xy, psi);
+        deformation(mesh, el_in_circle, sigma_xx, sigma_yy, sigma_xy, psi, folder_name);
         cout << "MESH IS DEFORMATED" << endl;
 
         // Solve deformated mesh
         solver(mesh, fespace, lambda_func, mu_func, dim, x, ess_tdof_list);
 
-        // Print results in file
         SigmaCoefficient pp_coeff(x, lambda_func, mu_func);
-    
-        sprintf(out_file_name, "fatigue/output_%06d.vtk", it);
-        fstream vtkFs(out_file_name, ios::out);
-        print(vtkFs, mesh, x, pp_field, pp_coeff, ref);
-        cout << "PRINTED " << it << endl;
+
+        // Print results in file    
+        if (it % it_out == 0) 
+        {
+            sprintf(out_file_name, "%s/output_%06d.vtk", folder_name, it);
+            fstream vtkFs(out_file_name, ios::out);
+            print(vtkFs, mesh, x, pp_field, pp_coeff, ref);
+            cout << "PRINTED " << it << endl;
+        }
     }
     
     delete mesh;
