@@ -1,8 +1,10 @@
 #include <mfem.hpp>
 #include <fstream>
 #include <iostream>
-#include <stdexcept>
-// #include <cmath>
+// #include <stdexcept>
+
+#include <sys/stat.h>
+#include <sys/types.h>
 
 using namespace std;
 using namespace mfem;
@@ -145,7 +147,7 @@ void get_sigma(Mesh *mesh, GridFunction &pp_field, Vector &sigma, int ref = 0)
     }
 }
 
-void deformation(Mesh *mesh, Array<bool> &el_in_circle, Vector &sigma_xx_full, Vector &sigma_yy_full, Vector &sigma_xy_full, Vector &psi, const char *folder_name, const bool &save_delta_N)
+double deformation(Mesh *mesh, Array<bool> &el_in_circle, Vector &sigma_xx_full, Vector &sigma_yy_full, Vector &sigma_xy_full, Vector &psi, const char *folder_name, const bool &save_delta_N)
 {
     const double sigma_u = 340e6;
     const double sigma_v = 1160e6;
@@ -199,15 +201,21 @@ void deformation(Mesh *mesh, Array<bool> &el_in_circle, Vector &sigma_xx_full, V
             int attribute_en = element->GetAttribute();
             double psi_k_n = psi(attribute_en - 1);
             double psi_k_next = pow(1 - sqrt(pow(1 - pow(psi_k_n, 1 - gamma), 2) - 2 * (1 - gamma) * B_n(en) * delta_N_n), 1 / (1 - gamma));
-            int it = 0;
-            while(it < psi.Size() && (psi_k_next - psi(it)) > 0)
-                it++;
-            if(it != 0 && (it == psi.Size() || (psi_k_next - psi(it - 1)) < (psi(it) - psi_k_next)))
-                element->SetAttribute(it);
-            else
-                element->SetAttribute(it + 1);
+            element->SetAttribute(closest_attr(psi, psi_k_next));
         }
     }
+    return delta_N_n;
+}
+
+int closest_attr(Vector& psi, double new_psi)
+{
+    int it = 0;
+    while(it < psi.Size() && (new_psi - psi(it)) > 0)
+        it++;
+    if(it != 0 && (it == psi.Size() || (new_psi - psi(it - 1)) < (psi(it) - new_psi)))
+        return it;
+    else
+        return it + 1;
 }
 
 void mesh_attribute_from_file(Mesh *mesh, const char *mesh_file_attr)
@@ -222,6 +230,107 @@ void mesh_attribute_from_file(Mesh *mesh, const char *mesh_file_attr)
     delete mesh_attr;
 }
 
+bool is_dir(const char* pathname)
+{
+    struct stat info;
+    if( stat( pathname, &info ) != 0 )
+    {
+        printf( "cannot access %s\n", pathname );
+        return false;
+    }
+    else if( info.st_mode & S_IFDIR )  // S_ISDIR() doesn't exist on my windows 
+        printf( "%s is a directory\n", pathname );
+    else
+    {
+        printf( "%s is no directory\n", pathname );
+        return false;
+    }
+    return true;
+}
+
+void getCellCentre(Mesh *mesh, int i, Array<double> &centre)
+{
+    Element *element = mesh->GetElement(i);
+    Array<int> indices;
+    element->GetVertices(indices);
+
+    double x_c = 0;
+    double y_c = 0;
+    // cout << element->GetNVertices();
+    for (int pn = 0; pn < element->GetNVertices(); pn++)
+    {
+        centre[0] += *(mesh->GetVertex(indices[pn]) + 0) / element->GetNVertices();
+        centre[1] += *(mesh->GetVertex(indices[pn]) + 1) / element->GetNVertices();
+    }
+}
+
+
+double calc_integ(Mesh *mesh, double h_NL, Vector &psi, bool use_psi, int en, double dist_2)
+{
+    double IT = 0;
+    // const FiniteElement *en_element = fespace->GetFE(en);
+    ElementTransformation &Tr = *mesh->GetElementTransformation(en);
+    int en_att = mesh->GetAttribute(en);
+
+    const IntegrationRule *ir = &IntRules.Get(mesh->GetElement(en)->GetGeometryType(), 1);
+    for (int i = 0; i < ir->GetNPoints(); i++)
+    {
+        const IntegrationPoint &ip = ir->IntPoint(i);
+        Tr.SetIntPoint(&ip);
+        if (use_psi)
+            IT += Tr.Weight() * 1/2 * pow((1 - pow(dist_2 / (h_NL * h_NL), 4)), 2) * psi(en_att - 1);
+        else
+            IT += Tr.Weight() * 1/2 * pow((1 - pow(dist_2 / (h_NL * h_NL), 4)), 2);
+    }
+    return IT;
+}
+
+double integral(Mesh *mesh, int ref_pnt, double h_NL, double weigth_kern, Vector &psi, Array2D<int> &points_in_area, bool use_psi)
+{
+    Array<double> ref_centre(2);
+    ref_centre = 0;
+    getCellCentre(mesh, ref_pnt, ref_centre);
+    double IT = 0;
+    int it = 0;
+
+    if (use_psi)
+    {
+        for (it = 0; it < points_in_area[ref_pnt][0]; it++)
+        {
+            int en = points_in_area[ref_pnt][it + 1];
+
+            Array<double> en_centre(2);
+            en_centre = 0;
+            getCellCentre(mesh, en, en_centre);
+            double dist_2 = (en_centre[0] - ref_centre[0]) * (en_centre[0] - ref_centre[0]) + 
+                            (en_centre[1] - ref_centre[1]) * (en_centre[1] - ref_centre[1]);
+
+            IT += calc_integ(mesh, h_NL, psi, use_psi, en, dist_2) / weigth_kern;
+        }
+    }
+    else
+    {
+        for (int en = 0; en < mesh->GetNE(); en++)
+        {
+            // if (en % 100 == 0) cout << en << endl;
+            Array<double> en_centre(2);
+            en_centre = 0;
+            getCellCentre(mesh, en, en_centre);
+            double dist_2 = (en_centre[0] - ref_centre[0]) * (en_centre[0] - ref_centre[0]) + 
+                            (en_centre[1] - ref_centre[1]) * (en_centre[1] - ref_centre[1]);
+
+            if (sqrt(dist_2) <= h_NL)
+            {
+                points_in_area[ref_pnt][it + 1] = en;
+                it++;
+                IT += calc_integ(mesh, h_NL, psi, use_psi, en, dist_2);
+            }
+        }
+        points_in_area[ref_pnt][0] = it;
+    }
+    return IT;
+}
+
 
 
 int main(int argc, char *argv[])
@@ -231,27 +340,46 @@ int main(int argc, char *argv[])
     int ref = 0;
 
     // Folder where you want to store the result.
-    // If you want to take last data and continue solving,
-    // don't forget to change folder in mesh_file_attr
-    const char *folder_name = "vel_test_2";
+    // If you want to take last data and continue solving, don't forget to change folder in mesh_file_attr
+    const char *folder_name = "smooth_vel_test_2";
+    bool flag = is_dir(folder_name);
+    if (!flag)
+        return -1;
+
     // If you want continue solving, make true and you'll get attributes from last file.
     // if true, you should solve last mesh again to get last GridFunction x - displacement
     // (it's easier than load displacement data from output_{start_num}.vtk)
     bool attr_from_file = false;
-    // Write number of last file in path and in start_num 
-    const char *mesh_file_attr = "./vel_test_2/output_000500.vtk";
-    int start_num = 500; // First out_file will be output_{start_num}.vtk
+    // Write number of last file in path and in start_num
+    int start_num = 60; // First out_file will be output_{start_num}.vtk
+    char mfa[100];
+    sprintf(mfa, "./%s/output_%06d.vtk", folder_name, start_num);
+    const char *mesh_file_attr = mfa;
     if (!attr_from_file) start_num = 0;
 
-    int run_count = 500 + 1; // Total, with first run (100 + 1 in case attr_from_file == true)
-    int it_out = 50;   // Every it_out iteration file will be written
+    // int dN_save_finish = 6000;
+    int run_count = 60 + 1; // Total, with first run (100 + 1 in case attr_from_file == true)
+
+    // int dN_save_start = 5000;
+    // int dN_save_step = 500;
+    int it_out = 60;   // Every it_out iteration file will be written
 
     const bool save_delta_N = true;  // Save delta_N in folder delta_N in file folder_name
+    if (save_delta_N)
+    {
+        flag = is_dir("delta_N");
+        if (!flag)
+            return -1;
+    }
 
     const bool inner_bndr = false;    // Fix inner boundary
     const bool bottom_dspl = false;   // Fix or displace bottom
 
-    int ref_levels = 3;  // Number of mesh->UniformRefinement()
+    int ref_levels = 2;  // Number of mesh->UniformRefinement()
+
+    bool smooth_psi = true;
+    double h_NL = 0.0001;
+
 
     OptionsParser args(argc, argv);
     args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -283,7 +411,6 @@ int main(int argc, char *argv[])
         mu(it) = E(it) / (2 * (1 + nu));
     }
 
-    // int ref_levels = (int)floor(log(5000./mesh->GetNE())/log(2.)/dim);
     for (int l = 0; l < ref_levels; l++)
         mesh->UniformRefinement();
 
@@ -358,15 +485,31 @@ int main(int argc, char *argv[])
 
     SigmaCoefficient pp_coeff(x, lambda_func, mu_func);
 
+    double dN, delta_N_n = 0;
+    int dN_save_it = 0;
+
     char out_file_name[100];
-    sprintf(out_file_name, "%s/output_%06d.vtk", folder_name, start_num);
+    sprintf(out_file_name, "%s/output_%06d(%05d).vtk", folder_name, (int) dN, start_num);
     fstream vtkFs(out_file_name, ios::out);
     print(vtkFs, mesh, x, pp_field, pp_coeff, ref);
 
     cout << "PRINTED " << start_num << endl;
-    
+
+    // Calculate weights and nearby points for next integrals to smooth deformation function
+    Vector smooth_weights(nc);
+    smooth_weights = 0.;
+    Array2D<int> points_in_area(mesh->GetNE(), mesh->GetNE() + 1);
+    points_in_area = -1;
+    if (smooth_psi)
+    {
+        for (int en = 0; en < mesh->GetNE(); en++)
+            smooth_weights(en) = integral(mesh, en, h_NL, 1, psi, points_in_area, false);
+    }
+
+    int it = start_num + 1;
     // (run_count - 1) iterations. deformate - > solve -> print
     for (int it = start_num + 1; it < start_num + run_count; it++)
+    // while (dN < dN_save_finish)
     {
         cout << endl << "IT = " << it << endl << endl;
 
@@ -382,7 +525,22 @@ int main(int argc, char *argv[])
         pp_field.ProjectCoefficient(pp_coeff);
         get_sigma(mesh, pp_field, sigma_yy, ref);
 
-        deformation(mesh, el_in_circle, sigma_xx, sigma_yy, sigma_xy, psi, folder_name, save_delta_N);
+        delta_N_n = deformation(mesh, el_in_circle, sigma_xx, sigma_yy, sigma_xy, psi, folder_name, save_delta_N);
+        dN += delta_N_n;
+
+        // Smooth def.func. with parametr h_NL
+        if (smooth_psi)
+        {
+            Array<int> new_att(nc);
+            new_att = 0;
+            for (int en = 0; en < mesh->GetNE(); en++)
+            {
+                double new_psi_en = integral(mesh, en, h_NL, smooth_weights(en), psi, points_in_area, true);
+                new_att[en] = closest_attr(psi, new_psi_en);
+            }
+            for (int en = 0; en < mesh->GetNE(); en++)
+                mesh->SetAttribute(en, new_att[en]);
+        }
         cout << "MESH IS DEFORMATED" << endl;
 
         // Solve deformated mesh
@@ -392,12 +550,15 @@ int main(int argc, char *argv[])
 
         // Print results in file    
         if (it % it_out == 0) 
+        // if (dN >= dN_save_start + dN_save_it * dN_save_step)
         {
-            sprintf(out_file_name, "%s/output_%06d.vtk", folder_name, it);
+            sprintf(out_file_name, "%s/output_%06d(%05d).vtk", folder_name, (int) dN, it);
             fstream vtkFs(out_file_name, ios::out);
             print(vtkFs, mesh, x, pp_field, pp_coeff, ref);
+            dN_save_it += 1;
             cout << "PRINTED " << it << endl;
         }
+        it++;
     }
     
     delete mesh;
