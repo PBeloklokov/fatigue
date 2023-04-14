@@ -147,6 +147,17 @@ void get_sigma(Mesh *mesh, GridFunction &pp_field, Vector &sigma, int ref = 0)
     }
 }
 
+int closest_attr(Vector& psi, double new_psi)
+{
+    int it = 0;
+    while(it < psi.Size() && (new_psi - psi(it)) > 0)
+        it++;
+    if(it != 0 && (it == psi.Size() || (new_psi - psi(it - 1)) < (psi(it) - new_psi)))
+        return it;
+    else
+        return it + 1;
+}
+
 double deformation(Mesh *mesh, Array<bool> &el_in_circle, Vector &sigma_xx_full, Vector &sigma_yy_full, Vector &sigma_xy_full, Vector &psi, const char *folder_name, const bool &save_delta_N)
 {
     const double sigma_u = 340e6;
@@ -205,17 +216,6 @@ double deformation(Mesh *mesh, Array<bool> &el_in_circle, Vector &sigma_xx_full,
         }
     }
     return delta_N_n;
-}
-
-int closest_attr(Vector& psi, double new_psi)
-{
-    int it = 0;
-    while(it < psi.Size() && (new_psi - psi(it)) > 0)
-        it++;
-    if(it != 0 && (it == psi.Size() || (new_psi - psi(it - 1)) < (psi(it) - new_psi)))
-        return it;
-    else
-        return it + 1;
 }
 
 void mesh_attribute_from_file(Mesh *mesh, const char *mesh_file_attr)
