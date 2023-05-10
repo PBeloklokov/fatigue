@@ -202,6 +202,7 @@ double deformation(Mesh *mesh, Array<bool> &el_in_circle, Vector &sigma_xx_full,
         sprintf(out_file_name, "delta_N/%s.txt", folder_name);
         ofstream dN_out(out_file_name, ios::app);     // (o)fstream?
         dN_out << delta_N_n << endl;
+        dN_out.close();
     }
 
     for (int en = 0; en < mesh->GetNE(); en++)
@@ -285,19 +286,19 @@ double calc_integ(Mesh *mesh, double h_NL, Vector &psi, bool use_psi, int en, do
     return IT;
 }
 
-double integral(Mesh *mesh, int ref_pnt, double h_NL, double weigth_kern, Vector &psi, Array2D<int> &points_in_area, bool use_psi)
+double integral(Mesh *mesh, int ref_pnt, double h_NL, double weigth_kern, Vector &psi, Array<int> &points_in_area, Array<int> &pointers_to_pia, bool use_psi)
 {
     Array<double> ref_centre(2);
     ref_centre = 0;
     getCellCentre(mesh, ref_pnt, ref_centre);
     double IT = 0;
-    int it = 0;
 
     if (use_psi)
     {
-        for (it = 0; it < points_in_area[ref_pnt][0]; it++)
+        int it_start = pointers_to_pia[ref_pnt];
+        for (int it = 0; it < points_in_area[it_start]; it++)
         {
-            int en = points_in_area[ref_pnt][it + 1];
+            int en = points_in_area[it_start + it + 1];
 
             Array<double> en_centre(2);
             en_centre = 0;
@@ -310,6 +311,8 @@ double integral(Mesh *mesh, int ref_pnt, double h_NL, double weigth_kern, Vector
     }
     else
     {
+        int it = 0;
+        Array<int> pia;
         for (int en = 0; en < mesh->GetNE(); en++)
         {
             // if (en % 100 == 0) cout << en << endl;
@@ -321,12 +324,16 @@ double integral(Mesh *mesh, int ref_pnt, double h_NL, double weigth_kern, Vector
 
             if (sqrt(dist_2) <= h_NL)
             {
-                points_in_area[ref_pnt][it + 1] = en;
+                // cout << "en = " << en << " sqrt(dist_2) = " << sqrt(dist_2) << endl;
+                // points_in_area[ref_pnt * (mesh->GetNE() + 1) + it + 1] = en;
+                pia.Append(en);
                 it++;
                 IT += calc_integ(mesh, h_NL, psi, use_psi, en, dist_2);
             }
         }
-        points_in_area[ref_pnt][0] = it;
+        pointers_to_pia[ref_pnt] = points_in_area.Size();
+        points_in_area.Append(it);
+        points_in_area.Append(pia);
     }
     return IT;
 }
@@ -341,7 +348,7 @@ int main(int argc, char *argv[])
 
     // Folder where you want to store the result.
     // If you want to take last data and continue solving, don't forget to change folder in mesh_file_attr
-    const char *folder_name = "smooth_vel_test_2";
+    const char *folder_name = "vel_test_2_smooth5e-5";
     bool flag = is_dir(folder_name);
     if (!flag)
         return -1;
@@ -358,7 +365,7 @@ int main(int argc, char *argv[])
     if (!attr_from_file) start_num = 0;
 
     // int dN_save_finish = 6000;
-    int run_count = 60 + 1; // Total, with first run (100 + 1 in case attr_from_file == true)
+    int run_count = 61; // Total, with first run (100 + 1 in case attr_from_file == true)
 
     // int dN_save_start = 5000;
     // int dN_save_step = 500;
@@ -378,7 +385,7 @@ int main(int argc, char *argv[])
     int ref_levels = 2;  // Number of mesh->UniformRefinement()
 
     bool smooth_psi = true;
-    double h_NL = 0.0001;
+    double h_NL = 0.00005;
 
 
     OptionsParser args(argc, argv);
@@ -433,6 +440,42 @@ int main(int argc, char *argv[])
     // Take attributes for each cell from file
     if (attr_from_file) mesh_attribute_from_file(mesh, mesh_file_attr);
 
+    // cout << "First check" << endl;
+    // Calculate weights and nearby points for next integrals to smooth deformation function
+    Vector smooth_weights(nc);
+    smooth_weights = 0.;
+    Array<int> points_in_area;
+    Array<int> pointers_to_pia(mesh->GetNE());
+    char in_file_name[100];
+    sprintf(in_file_name, "smooth_coefficients/pia_ref%d_hNL%.6f.txt", ref_levels, h_NL);
+    ifstream pia_in(in_file_name, ios::in);
+    int data, len = 0;
+    
+    for (int en = 0; en < mesh->GetNE(); en++)
+    {
+        pia_in >> len;
+        pointers_to_pia[en] = points_in_area.Size();
+        points_in_area.Append(len);
+        for (int it = 0; it < len; it++)
+        {
+            pia_in >> data;
+            points_in_area.Append(data);
+        }
+    }
+    pia_in.close();
+
+    // cout << "Second check" << endl;
+
+    sprintf(in_file_name, "smooth_coefficients/weights_ref%d_hNL%.6f.txt", ref_levels, h_NL);
+    ifstream weights_in(in_file_name, ios::in);
+    
+    for (int en = 0; en < mesh->GetNE(); en++)
+    {
+        weights_in >> smooth_weights(en);
+    }
+    weights_in.close();
+
+    cout << "Third check" << endl;
 
     L2_FECollection pp_fec(order, dim);
     FiniteElementSpace pp_fespace(mesh, &pp_fec);
@@ -486,25 +529,27 @@ int main(int argc, char *argv[])
     SigmaCoefficient pp_coeff(x, lambda_func, mu_func);
 
     double dN, delta_N_n = 0;
-    int dN_save_it = 0;
+    // int dN_save_it = 0;
 
     char out_file_name[100];
-    sprintf(out_file_name, "%s/output_%06d(%05d).vtk", folder_name, (int) dN, start_num);
+    // sprintf(out_file_name, "%s/output_%06d(%05d).vtk", folder_name, (int) dN, start_num);
+    sprintf(out_file_name, "%s/output_%06d.vtk", folder_name, start_num);
     fstream vtkFs(out_file_name, ios::out);
     print(vtkFs, mesh, x, pp_field, pp_coeff, ref);
+    vtkFs.close();
 
     cout << "PRINTED " << start_num << endl;
 
-    // Calculate weights and nearby points for next integrals to smooth deformation function
-    Vector smooth_weights(nc);
-    smooth_weights = 0.;
-    Array2D<int> points_in_area(mesh->GetNE(), mesh->GetNE() + 1);
-    points_in_area = -1;
-    if (smooth_psi)
-    {
-        for (int en = 0; en < mesh->GetNE(); en++)
-            smooth_weights(en) = integral(mesh, en, h_NL, 1, psi, points_in_area, false);
-    }
+    // // Calculate weights and nearby points for next integrals to smooth deformation function
+    // Vector smooth_weights(nc);
+    // smooth_weights = 0.;
+    // Array2D<int> points_in_area(mesh->GetNE(), mesh->GetNE() + 1);
+    // points_in_area = -1;
+    // if (smooth_psi)
+    // {
+    //     for (int en = 0; en < mesh->GetNE(); en++)
+    //         smooth_weights(en) = integral(mesh, en, h_NL, 1, psi, points_in_area, false);
+    // }
 
     int it = start_num + 1;
     // (run_count - 1) iterations. deformate - > solve -> print
@@ -535,7 +580,7 @@ int main(int argc, char *argv[])
             new_att = 0;
             for (int en = 0; en < mesh->GetNE(); en++)
             {
-                double new_psi_en = integral(mesh, en, h_NL, smooth_weights(en), psi, points_in_area, true);
+                double new_psi_en = integral(mesh, en, h_NL, smooth_weights(en), psi, points_in_area, pointers_to_pia, true);
                 new_att[en] = closest_attr(psi, new_psi_en);
             }
             for (int en = 0; en < mesh->GetNE(); en++)
@@ -552,13 +597,15 @@ int main(int argc, char *argv[])
         if (it % it_out == 0) 
         // if (dN >= dN_save_start + dN_save_it * dN_save_step)
         {
-            sprintf(out_file_name, "%s/output_%06d(%05d).vtk", folder_name, (int) dN, it);
+            // sprintf(out_file_name, "%s/output_%06d(%05d).vtk", folder_name, (int) dN, it);
+            sprintf(out_file_name, "%s/output_%06d.vtk", folder_name, it);
             fstream vtkFs(out_file_name, ios::out);
             print(vtkFs, mesh, x, pp_field, pp_coeff, ref);
-            dN_save_it += 1;
+            vtkFs.close();
+            // dN_save_it += 1;
             cout << "PRINTED " << it << endl;
         }
-        it++;
+        // it++; //in case < dN
     }
     
     delete mesh;
